@@ -16,7 +16,7 @@ const FIXED_RECIPIENTS = [
 ];
 
 // Remitente fijo verificado en Resend
-const FIXED_FROM = 'info@avanxia.com';
+const FIXED_FROM = 'noreply@tscseguridadprivada.com.mx';
 
 /**
  * Obtiene la configuración de notificación y la API key desencriptada para un workspace.
