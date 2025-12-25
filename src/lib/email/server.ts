@@ -16,7 +16,7 @@ const FIXED_RECIPIENTS = [
 ];
 
 // Remitente fijo verificado en Resend
-const FIXED_FROM = 'noreply@tscseguridadprivada.com.mx';
+const FIXED_FROM = 'noreply@guimarais.com';
 
 /**
  * Obtiene la configuración de notificación y la API key desencriptada para un workspace.

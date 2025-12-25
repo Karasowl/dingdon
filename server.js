@@ -142,7 +142,7 @@ nextApp.prepare().then(() => {
                     'ventas@tscseguridadprivada.com.mx',
                     'ismael.sg@tscseguridadprivada.com.mx',
                 ];
-                const from = 'noreply@tscseguridadprivada.com.mx';
+                const from = 'noreply@guimarais.com';
                 // Intentamos obtener el lead más reciente del workspace para incluir datos de contacto
                 let leadSectionHtml = '';
                 try {
