@@ -138,11 +138,20 @@ nextApp.prepare().then(() => {
                 console.warn('[Handoff Email] RESEND_API_KEY no está configurada en el entorno.');
             } else {
                 const resend = new Resend(apiKey);
-                const recipients = [
-                    'ventas@tscseguridadprivada.com.mx',
-                    'ismael.sg@tscseguridadprivada.com.mx',
-                ];
-                const from = 'noreply@guimarais.com';
+
+                // Load email config from workspace (dynamic, not hardcoded)
+                const defaultRecipients = ['ventas@tscseguridadprivada.com.mx', 'ismael.sg@tscseguridadprivada.com.mx'];
+                const defaultFrom = 'noreply@guimarais.com';
+                const { data: wsEmailConfig } = await supabase
+                    .from('workspaces')
+                    .select('notification_emails, notification_from_email')
+                    .eq('id', workspaceId)
+                    .single();
+
+                const recipients = (wsEmailConfig?.notification_emails?.length)
+                    ? wsEmailConfig.notification_emails
+                    : defaultRecipients;
+                const from = wsEmailConfig?.notification_from_email || defaultFrom;
                 // Intentamos obtener el lead más reciente del workspace para incluir datos de contacto
                 let leadSectionHtml = '';
                 try {
@@ -293,44 +302,33 @@ nextApp.prepare().then(() => {
             console.log(`[Socket.IO] Socket ${socket.id} joined session: ${sessionId}`);
         });
 
-        socket.on('join_agent_dashboard', ({ workspaceId }) => {
-            if (workspaceId) {
-                const dashboardRoom = `dashboard_${workspaceId}`;
-                socket.join(dashboardRoom);
-                console.log(`[Socket.IO] Socket ${socket.id} joined dashboard: ${dashboardRoom}`);
+        socket.on('join_agent_dashboard', async ({ workspaceId }) => {
+            if (!workspaceId) return;
 
-                // Registrar o actualizar la información del agente
-                const agentInfo = agentSockets.get(socket.id) || {};
-                agentInfo.workspaceId = workspaceId;
-                agentSockets.set(socket.id, agentInfo);
-            }
-        });
+            // Verify agent belongs to this workspace
+            const agentInfo = agentSockets.get(socket.id);
+            if (agentInfo?.agentId) {
+                const { data: membership } = await supabase
+                    .from('workspace_members')
+                    .select('id')
+                    .eq('workspace_id', workspaceId)
+                    .eq('user_id', agentInfo.agentId)
+                    .single();
 
-        socket.on('new_handoff_request', async ({ workspaceId, requestData }) => {
-            if (!workspaceId || !requestData?.sessionId) return;
-
-            console.log(`[Socket.IO] New handoff request for session: ${requestData.sessionId}`);
-
-            const sessionInMemory = workspacesData[workspaceId]?.[requestData.sessionId];
-            if (sessionInMemory) {
-                sessionInMemory.status = 'pending';
-
-                // Insertar o actualizar la sesión en la base de datos
-                const { error } = await supabase.from('chat_sessions').upsert({
-                    id: requestData.sessionId,
-                    workspace_id: workspaceId,
-                    status: 'pending',
-                    history: sessionInMemory.history || [],
-                }, { onConflict: 'id' });
-
-                if (error) {
-                    console.error(`[DB Error] Upsert fallido para sesión ${requestData.sessionId}:`, error.message);
-                } else {
-                    console.log(`[DB Success] Sesión ${requestData.sessionId} creada/actualizada en la DB.`);
+                if (!membership) {
+                    console.warn(`[Socket.IO] Agent ${agentInfo.agentId} not authorized for workspace ${workspaceId}`);
+                    socket.emit('error', { message: 'Not a member of this workspace' });
+                    return;
                 }
-
-                io.to(`dashboard_${workspaceId}`).emit('new_chat_request', requestData);
             }
+
+            const dashboardRoom = `dashboard_${workspaceId}`;
+            socket.join(dashboardRoom);
+            console.log(`[Socket.IO] Socket ${socket.id} joined dashboard: ${dashboardRoom}`);
+
+            const info = agentSockets.get(socket.id) || {};
+            info.workspaceId = workspaceId;
+            agentSockets.set(socket.id, info);
         });
 
         socket.on('agent_joined', async ({ workspaceId, sessionId, agentId }) => {
@@ -883,7 +881,16 @@ nextApp.prepare().then(() => {
                 console.log(`[Intervención] 'assignment_success' enviado al agente ${agentId}.`);
 
                 // 5. Notificamos al cliente (ChatbotUI) que el estado ha cambiado a 'in_progress'
-                io.to(sessionId).emit('status_change', 'in_progress');
+                const { data: interventionAgentProfile } = await supabase
+                    .from('profiles')
+                    .select('name')
+                    .eq('id', agentId)
+                    .single();
+                io.to(sessionId).emit('status_change', {
+                    status: 'in_progress',
+                    name: interventionAgentProfile?.name || 'Agente',
+                    type: 'agent_joined'
+                });
                 console.log(`[Intervención] 'status_change' a 'in_progress' enviado al cliente en la sala ${sessionId}.`);
 
                 // 6. Notificamos a TODOS los dashboards que este chat ya no debe ser monitoreado
@@ -913,7 +920,7 @@ nextApp.prepare().then(() => {
             }
 
             // Emitir cambio de estado a toda la sala
-            io.to(sessionId).emit('status_change', 'closed');
+            io.to(sessionId).emit('status_change', { status: 'closed', name: '', type: 'chat_closed' });
 
             // Limpiar referencias de la sesión
             sessionSockets.delete(sessionId);
@@ -926,54 +933,77 @@ nextApp.prepare().then(() => {
             }, 60000); // Limpiar después de 1 minuto
         });
 
-        // 🔧 NUEVO: Manejar eventos de reconexión
-        socket.on('reconnect', () => {
-            console.log(`[Socket.IO] Socket ${socket.id} reconectado`);
-
-            // Recuperar información del agente si existe
-            const agentInfo = agentSockets.get(socket.id);
-            if (agentInfo) {
-                // Re-join al workspace dashboard
-                if (agentInfo.workspaceId) {
-                    socket.join(`dashboard_${agentInfo.workspaceId}`);
-                    console.log(`[Socket.IO] Re-joined dashboard for workspace ${agentInfo.workspaceId}`);
-                }
-
-                // Re-join a la sesión activa
-                if (agentInfo.sessionId) {
-                    socket.join(agentInfo.sessionId);
-                    addSocketToSession(agentInfo.sessionId, socket.id);
-                    console.log(`[Socket.IO] Re-joined session ${agentInfo.sessionId}`);
-                }
-            }
-        });
-
-        // 🔧 MEJORADO: Cleanup al desconectar
-        socket.on('disconnect', (reason) => {
-            console.log(`[Socket.IO] Cliente desconectado: ${socket.id}, razón: ${reason}`);
-
-            // Limpiar todas las referencias de este socket
-            cleanupSocketReferences(socket.id);
-
-            // Si era un agente, podrías querer notificar que se desconectó
-            // (opcional, dependiendo de tus necesidades)
-        });
-
-        // 🔧 NUEVO: Heartbeat para mantener conexión activa
+        // Heartbeat para mantener conexión activa
         const heartbeatInterval = setInterval(() => {
             if (socket.connected) {
                 socket.emit('heartbeat', { timestamp: Date.now() });
             }
-        }, 30000); // Cada 30 segundos
+        }, 30000);
 
         socket.on('heartbeat_response', () => {
-            // El cliente responde al heartbeat
             console.log(`[Socket.IO] Heartbeat response from ${socket.id}`);
         });
 
-        // Limpiar el intervalo cuando el socket se desconecta
-        socket.on('disconnect', () => {
+        // Single disconnect handler (merged heartbeat cleanup + agent unassign + socket cleanup)
+        socket.on('disconnect', async (reason) => {
+            console.log(`[Socket.IO] Cliente desconectado: ${socket.id}, razón: ${reason}`);
+
+            // 1. Clear heartbeat interval
             clearInterval(heartbeatInterval);
+
+            // 2. If this was an agent with an active chat, requeue the chat
+            const agentInfo = agentSockets.get(socket.id);
+            if (agentInfo?.sessionId && agentInfo?.workspaceId && agentInfo?.agentId) {
+                const sessionId = agentInfo.sessionId;
+                const wId = agentInfo.workspaceId;
+
+                console.log(`[Disconnect] Agent ${agentInfo.agentId} disconnected while handling session ${sessionId}. Requeuing...`);
+
+                try {
+                    // Update DB: set status back to pending, clear agent
+                    await supabase
+                        .from('chat_sessions')
+                        .update({ status: 'pending', assigned_agent_id: null })
+                        .eq('id', sessionId)
+                        .eq('status', 'in_progress');
+
+                    // Update in-memory state
+                    if (workspacesData[wId]?.[sessionId]) {
+                        workspacesData[wId][sessionId].status = 'pending';
+                        workspacesData[wId][sessionId].assignedAgentId = null;
+                    }
+
+                    // Get first message for context
+                    const { data: sessionData } = await supabase
+                        .from('chat_sessions')
+                        .select('history')
+                        .eq('id', sessionId)
+                        .single();
+
+                    const initialMessage = sessionData?.history?.[0] || { content: 'Agente desconectado' };
+
+                    // Notify dashboard so another agent can pick up
+                    io.to(`dashboard_${wId}`).emit('new_chat_request', {
+                        sessionId,
+                        initialMessage,
+                        isTransfer: true
+                    });
+
+                    // Notify client that agent disconnected
+                    io.to(sessionId).emit('status_change', {
+                        status: 'pending',
+                        name: '',
+                        type: 'agent_disconnected'
+                    });
+
+                    console.log(`[Disconnect] Session ${sessionId} requeued successfully.`);
+                } catch (err) {
+                    console.error(`[Disconnect] Error requeuing session ${sessionId}:`, err);
+                }
+            }
+
+            // 3. Clean up all socket references
+            cleanupSocketReferences(socket.id);
         });
     });
 
@@ -1027,7 +1057,7 @@ nextApp.prepare().then(() => {
                     });
 
                     // También emitir al cliente si está conectado
-                    io.to(chat.id).emit('status_change', 'closed');
+                    io.to(chat.id).emit('status_change', { status: 'closed', name: '', type: 'auto_closed' });
 
                     // Limpiar de memoria
                     if (workspacesData[chat.workspace_id]?.[chat.id]) {

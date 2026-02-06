@@ -30,6 +30,15 @@ export async function POST(
             return NextResponse.json({ error: 'No file provided.' }, { status: 400 });
         }
 
+        const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+        if (!ALLOWED_TYPES.includes(file.type)) {
+            return NextResponse.json({ error: 'File type not allowed. Use JPEG, PNG, WebP, or GIF.' }, { status: 400 });
+        }
+        if (file.size > MAX_SIZE) {
+            return NextResponse.json({ error: 'File too large. Max 5MB.' }, { status: 400 });
+        }
+
         // 2. Crear un nombre de archivo único para evitar sobrescribir imágenes
         const fileExtension = file.name.split('.').pop();
         const fileName = `${workspaceId}-${Date.now()}.${fileExtension}`;

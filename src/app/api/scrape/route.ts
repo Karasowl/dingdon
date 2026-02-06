@@ -8,6 +8,33 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 // 1. Inicializamos el cliente de Google, leyendo la nueva clave de entorno.
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
+function isUrlSafe(urlString: string): boolean {
+  try {
+    const parsed = new URL(urlString);
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname.endsWith('.local') ||
+      hostname.startsWith('10.') ||
+      hostname.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+      hostname === 'metadata.google.internal' ||
+      hostname === '169.254.169.254'
+    ) {
+      return false;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { url, question } = await req.json();
@@ -16,8 +43,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'La URL y la pregunta son obligatorias' }, { status: 400 });
     }
 
-    // El proceso de scraping es EXACTAMENTE el mismo
-    const response = await fetch(url);
+    if (!isUrlSafe(url)) {
+      return NextResponse.json({ error: 'URL no permitida' }, { status: 400 });
+    }
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!response.ok) {
         return NextResponse.json({ error: `No se pudo acceder a la URL. Estado: ${response.status}` }, { status: 500 });
     }
@@ -54,7 +84,11 @@ export async function POST(req: NextRequest) {
     const extractedData = aiResponse.text();
 
     // 4. Devolver la respuesta JSON parseada al cliente.
-    return NextResponse.json(JSON.parse(extractedData || '{}'));
+    try {
+      return NextResponse.json(JSON.parse(extractedData || '{}'));
+    } catch {
+      return NextResponse.json({ raw: extractedData });
+    }
 
   } catch (error) {
     console.error('Error en el endpoint de scrape con Gemini:', error);

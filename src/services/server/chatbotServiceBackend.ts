@@ -158,12 +158,19 @@ function generateAIContext(config: ChatbotConfig, userPrompt: string, language: 
 
 
 // --- FUNCIONES ESPECÍFICAS PARA CADA PROVEEDOR DE IA ---
+const AI_TIMEOUT_MS = 30000; // 30 seconds
+
 async function generateGeminiResponse(prompt: string, apiKey: string, modelName: string): Promise<string> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
     model: modelName
   })
-  const result = await model.generateContent(prompt)
+  const result = await Promise.race([
+    model.generateContent(prompt),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Gemini API timeout')), AI_TIMEOUT_MS)
+    )
+  ]);
   return result.response.text().trim();
 }
 
@@ -176,7 +183,8 @@ async function generateKimiResponse(prompt: string, apiKey: string, modelName: s
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
-    }
+    },
+    timeout: AI_TIMEOUT_MS
   });
   return response.data.choices[0].message.content.trim();
 }
@@ -190,7 +198,8 @@ async function generateDeepSeekResponse(prompt: string, apiKey: string, modelNam
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
-    }
+    },
+    timeout: AI_TIMEOUT_MS
   });
   return response.data.choices[0].message.content.trim();
 }

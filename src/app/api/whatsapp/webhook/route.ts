@@ -1,6 +1,6 @@
 // app/api/whatsapp/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { sendWhatsAppMessage } from "@/lib/twilio";
+import { sendWhatsAppMessage, validateTwilioRequest } from "@/lib/twilio";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { chatbotServiceBackend } from "@/services/server/chatbotServiceBackend";
 import { getTranslations } from "@/lib/server/translations"
@@ -45,6 +45,19 @@ export async function POST(req: NextRequest) {
 
         // 2- Leer los datos del formulario en Twilio. Twilio envia los datos como 'form-data', no JSON
         const body = await req.formData()
+
+        // Validate Twilio signature to prevent spoofed requests
+        const twilioSignature = req.headers.get('x-twilio-signature') || '';
+        if (twilioSignature) {
+            const params: Record<string, string> = {};
+            body.forEach((value, key) => { params[key] = value.toString(); });
+            const webhookUrl = req.url;
+            if (!validateTwilioRequest(twilioConfig, twilioSignature, webhookUrl, params)) {
+                console.warn(`[WhatsApp Webhook] Invalid Twilio signature for workspace ${workspaceId}`);
+                return new NextResponse('Invalid signature', { status: 403 });
+            }
+        }
+
         const userPhone = body.get('From') as string
         const userMessage = body.get('Body') as string
 
@@ -275,21 +288,24 @@ export async function POST(req: NextRequest) {
 
                         console.log("INTERNALURL: ", internalApiUrl)
 
-                        fetch(internalApiUrl, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'x-internal-secret': process.env.INTERNAL_API_SECRET || ''
-                            },
-                            body: JSON.stringify({
-                                workspaceId: workspaceId,
-                                sessionId: session.id,
-                                history: updatedHistory,
-                                initialMessage: firstUserMessage
-                            })
-                        }).catch(err => {
-                            console.error('[API Route] Error llamando al notificador interno de handoff:', err);
-                        });
+                        try {
+                            await fetch(internalApiUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'x-internal-secret': process.env.INTERNAL_API_SECRET || ''
+                                },
+                                body: JSON.stringify({
+                                    workspaceId: workspaceId,
+                                    sessionId: session.id,
+                                    history: updatedHistory,
+                                    initialMessage: firstUserMessage
+                                }),
+                                signal: AbortSignal.timeout(5000)
+                            });
+                        } catch (err) {
+                            console.error('[WhatsApp Webhook] Error notificando handoff:', err);
+                        }
                         
                         // Nota: El correo se envía desde el servidor interno (server.js) 
                         // para evitar duplicados. No enviamos desde aquí.

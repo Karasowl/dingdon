@@ -9,39 +9,38 @@ interface LeadData {
     phone?: string;
 }
 
-// Destinatarios fijos para notificaciones
-const FIXED_RECIPIENTS = [
+// Fallback defaults (used when workspace has no custom config)
+const DEFAULT_RECIPIENTS = [
     'ventas@tscseguridadprivada.com.mx',
     'ismael.sg@tscseguridadprivada.com.mx',
 ];
-
-// Remitente fijo verificado en Resend
-const FIXED_FROM = 'noreply@guimarais.com';
+const DEFAULT_FROM = 'noreply@guimarais.com';
 
 /**
  * Obtiene la configuración de notificación y la API key desencriptada para un workspace.
- * @param workspaceId - El ID del workspace.
- * @returns Un objeto con la configuración necesaria para enviar un correo, o null si no está configurado.
+ * Loads recipients and sender from workspace settings if available, otherwise falls back to defaults.
  */
 async function getNotificationConfig(workspaceId: string) {
-    // 1) Intentar usar API key desde entorno
-    const envApiKey = process.env.RESEND_API_KEY || process.env.DINDON_RESEND_API_KEY;
-    if (envApiKey) {
-        return {
-            recipients: FIXED_RECIPIENTS,
-            from: FIXED_FROM,
-            resend: new Resend(envApiKey),
-        };
-    }
-
-    // 2) Si no hay en entorno, buscar solo la API key del workspace
+    // Load workspace email settings from DB
     const { data: workspace, error } = await supabaseAdmin
         .from('workspaces')
-        .select('resend_api_key')
+        .select('resend_api_key, notification_emails, notification_from_email')
         .eq('id', workspaceId)
         .single();
 
-    if (error || !workspace || !workspace.resend_api_key) {
+    // Determine recipients and sender (workspace-specific or defaults)
+    const wsEmails = workspace?.notification_emails as string[] | null;
+    const recipients = wsEmails?.length ? wsEmails : DEFAULT_RECIPIENTS;
+    const from = (workspace?.notification_from_email as string | null) || DEFAULT_FROM;
+
+    // 1) Try API key from environment
+    const envApiKey = process.env.RESEND_API_KEY || process.env.DINDON_RESEND_API_KEY;
+    if (envApiKey) {
+        return { recipients, from, resend: new Resend(envApiKey) };
+    }
+
+    // 2) Try workspace-specific encrypted API key
+    if (error || !workspace?.resend_api_key) {
         console.log(`[Email Service] API key de Resend no configurada para el workspace ${workspaceId}`);
         return null;
     }
@@ -52,11 +51,7 @@ async function getNotificationConfig(workspaceId: string) {
         return null;
     }
 
-    return {
-        recipients: FIXED_RECIPIENTS,
-        from: FIXED_FROM,
-        resend: new Resend(apiKey),
-    };
+    return { recipients, from, resend: new Resend(apiKey) };
 }
 
 export const emailService = {

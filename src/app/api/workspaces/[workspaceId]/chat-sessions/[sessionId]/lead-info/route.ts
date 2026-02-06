@@ -15,26 +15,17 @@ export async function GET(
 
     const { workspaceId, sessionId } = await params;
 
-    console.log('[Lead Info API] Session user:', session.user);
-    console.log('[Lead Info API] WorkspaceId:', workspaceId);
-    console.log('[Lead Info API] SessionId:', sessionId);
-
-    // TEMPORAL: Verificación de workspace deshabilitada para debug
-    console.log('[Lead Info API] TEMPORAL: Saltando verificación de workspace para debug');
-    
-    // TODO: Rehabilitar esta verificación una vez que se solucione el problema de permisos
-    /*
-    const { data: workspaceUser, error: workspaceError } = await supabaseAdmin
-      .from('workspace_users')
+    // Verificar que el usuario pertenece al workspace
+    const { data: membership, error: membershipError } = await supabaseAdmin
+      .from('workspace_members')
       .select('role')
       .eq('workspace_id', workspaceId)
       .eq('user_id', session.user.id)
       .single();
 
-    if (workspaceError || !workspaceUser) {
+    if (membershipError || !membership) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
-    */
 
     // Obtener información de la sesión de chat
     const { data: chatSession, error: chatError } = await supabaseAdmin

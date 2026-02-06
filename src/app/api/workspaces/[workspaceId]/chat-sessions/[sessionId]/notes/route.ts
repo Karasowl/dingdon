@@ -20,8 +20,17 @@ export async function POST(
       return NextResponse.json({ error: 'Content is required' }, { status: 400 });
     }
 
-    // TEMPORAL: Verificación de workspace deshabilitada para debug
-    console.log('[Notes API] TEMPORAL: Saltando verificación de workspace para debug');
+    // Verificar que el usuario pertenece al workspace
+    const { data: membership, error: membershipError } = await supabaseAdmin
+      .from('workspace_members')
+      .select('role')
+      .eq('workspace_id', workspaceId)
+      .eq('user_id', session.user.id)
+      .single();
+
+    if (membershipError || !membership) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    }
 
     // Verificar que la sesión de chat existe
     const { data: chatSession, error: chatError } = await supabaseAdmin
@@ -83,8 +92,17 @@ export async function GET(
 
     const { workspaceId, sessionId } = await params;
 
-    // TEMPORAL: Verificación de workspace deshabilitada para debug
-    console.log('[Notes API] TEMPORAL: Saltando verificación de workspace para debug');
+    // Verificar que el usuario pertenece al workspace
+    const { data: membership, error: membershipError } = await supabaseAdmin
+      .from('workspace_members')
+      .select('role')
+      .eq('workspace_id', workspaceId)
+      .eq('user_id', session.user.id)
+      .single();
+
+    if (membershipError || !membership) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    }
 
     // Obtener todas las notas de la sesión
     const { data: notes, error: notesError } = await supabaseAdmin

@@ -41,6 +41,7 @@
 // app/lib/twilio.ts
 
 import twilio from 'twilio';
+import { validateRequest } from 'twilio';
 
 // Definimos un tipo para el objeto de configuración para mayor seguridad y claridad.
 interface TwilioConfig {
@@ -73,6 +74,21 @@ function getTwilioClient(accountSid: string, configName: string) {
     
     console.error("Error: Faltan el Account SID o el Auth Token para crear el cliente de Twilio.");
     return null;
+}
+
+/**
+ * Validates that a request actually comes from Twilio by checking the signature.
+ */
+export function validateTwilioRequest(
+    twilioConfig: TwilioConfig,
+    signature: string,
+    url: string,
+    params: Record<string, string>
+): boolean {
+    const authTokenEnvVar = `TWILIO_TOKEN_${twilioConfig.config_name}`;
+    const authToken = process.env[authTokenEnvVar];
+    if (!authToken) return false;
+    return validateRequest(authToken, signature, url, params);
 }
 
 /**

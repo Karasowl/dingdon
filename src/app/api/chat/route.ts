@@ -7,6 +7,7 @@ import path from 'path';
 import { readFile } from 'fs/promises';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { emailService } from '@/lib/email/server';
+import { checkRateLimit } from '@/lib/rateLimit';
 
 
 // --- Helper para crear respuestas con cabeceras CORS ---
@@ -62,12 +63,16 @@ async function getServerTranslations(language: string, namespace: string = 'chat
 export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
+    // Rate limit by IP (20 requests per minute per IP)
+    const clientIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    if (!checkRateLimit(`chat:${clientIp}`, 20, 60000)) {
+      return createCorsResponse({ error: 'Too many requests. Please try again later.' }, 429);
+    }
+
     const body = await req.json();
     const { workspaceId, message, sessionId, history, language } = body;
 
-    // --- LOG #2: ¿QUÉ HISTORIAL RECIBIÓ LA API? ---
     console.log(`[/api/chat] Petición recibida. El historial tiene ${history.length} mensajes.`);
-
 
     if (!workspaceId) {
       return createCorsResponse({ error: 'Workspace ID is required.' }, 400);

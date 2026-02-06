@@ -72,44 +72,20 @@ export async function POST(
             return NextResponse.json({ error: 'Failed to update user profile' }, { status: 500 });
         }
 
-        // 4. Verificar si ya existe la membresía (por si acaso)
-        const { data: existingMembership } = await supabaseAdmin
+        // 4. Crear o actualizar membresía (atomic upsert to prevent race conditions)
+        const { error: membershipError } = await supabaseAdmin
             .from('workspace_members')
-            .select('*')
-            .eq('workspace_id', workspaceId)
-            .eq('user_id', authData.user.id)
-            .single();
+            .upsert({
+                workspace_id: workspaceId,
+                user_id: authData.user.id,
+                role: role
+            }, { onConflict: 'workspace_id,user_id' });
 
-        if (existingMembership) {
-            // Si ya existe, actualizamos en lugar de insertar
-            const { error: membershipError } = await supabaseAdmin
-                .from('workspace_members')
-                .update({ role: role })
-                .eq('workspace_id', workspaceId)
-                .eq('user_id', authData.user.id);
-
-            if (membershipError) {
-                console.error('Error updating workspace membership:', membershipError);
-                await supabaseAdmin.from('profiles').delete().eq('id', authData.user.id);
-                await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-                return NextResponse.json({ error: 'Failed to update workspace membership' }, { status: 500 });
-            }
-        } else {
-            // Si no existe, creamos nueva membresía
-            const { error: membershipError } = await supabaseAdmin
-                .from('workspace_members')
-                .insert({
-                    workspace_id: workspaceId,
-                    user_id: authData.user.id,
-                    role: role
-                });
-
-            if (membershipError) {
-                console.error('Error creating workspace membership:', membershipError);
-                await supabaseAdmin.from('profiles').delete().eq('id', authData.user.id);
-                await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-                return NextResponse.json({ error: 'Failed to create workspace membership' }, { status: 500 });
-            }
+        if (membershipError) {
+            console.error('Error upserting workspace membership:', membershipError);
+            await supabaseAdmin.from('profiles').delete().eq('id', authData.user.id);
+            await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+            return NextResponse.json({ error: 'Failed to create workspace membership' }, { status: 500 });
         }
 
         // 5. Respuesta exitosa
