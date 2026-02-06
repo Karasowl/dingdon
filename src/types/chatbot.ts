@@ -44,6 +44,7 @@ export interface ChatbotConfig {
  */
 export interface ChatApiResponse {
   reply: string;
+  handoff?: boolean;
 }
  
 /**

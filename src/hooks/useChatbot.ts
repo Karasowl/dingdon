@@ -43,7 +43,8 @@ export const useChatbot = () => {
     leadCollected,
     setLeadCollected,
     systemNotification,
-    setSystemNotification
+    setSystemNotification,
+    requestAgentHandoff
   } = useChatStore(
 
     // useShallow prevents re-renders if other parts of the state change
@@ -70,7 +71,8 @@ export const useChatbot = () => {
       leadCollected: state.leadCollected,
       setLeadCollected: state.setLeadCollected,
       systemNotification: state.systemNotification,
-      setSystemNotification: state.setSystemNotification
+      setSystemNotification: state.setSystemNotification,
+      requestAgentHandoff: state.requestAgentHandoff
     }))
   );
 
@@ -239,11 +241,10 @@ export const useChatbot = () => {
       setIsLoading(true);
     },
 
-    onSuccess: (reply) => {
-      // The `data` from the mutation is the string reply from our backend
+    onSuccess: (data) => {
       const assistantMessage: Message = {
         id: `asst-${Date.now()}`,
-        content: reply,
+        content: data.reply,
         role: 'assistant',
         timestamp: new Date(),
       };
@@ -252,6 +253,12 @@ export const useChatbot = () => {
       // Send the bot's message to save it
       if (socketRef.current && sessionId && workspaceId) {
         socketRef.current.emit('user_message', { workspaceId, sessionId, message: assistantMessage })
+      }
+
+      // If the backend detected a handoff, transition status to 'pending'
+      if (data.handoff) {
+        console.log('[useChatbot] Handoff detected, transitioning to pending status');
+        requestAgentHandoff();
       }
     },
 

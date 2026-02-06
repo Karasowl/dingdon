@@ -2,7 +2,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { chatbotServiceBackend } from '@/services/server/chatbotServiceBackend';
-import { notificationService } from '@/lib/server/notificationService';
 import { Message } from '@/types/chatbot';
 import path from 'path';
 import { readFile } from 'fs/promises';
@@ -95,50 +94,45 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         (msg: Message) => msg.role === 'user'
       )
 
-      // We call the service to send the notification to the agent dashboard.
-      if (firstUserMessage) {
-        notificationService.notifyNewHandoffRequest(workspaceId, {
-          sessionId: sessionId,
-          initialMessage: firstUserMessage
-        });
-      }
-
       // La URL de nuestro propio servidor. Render se encarga de resolver esto internamente.
-      //const internalApiUrl = `http://localhost:${process.env.PORT || 3001}/api/internal/notify-handoff`;
       const isDev = process.env.NODE_ENV !== 'production';
       const internalApiUrl = isDev
-        ? 'http://localhost:3001/api/internal/notify-handoff'  // Express server en desarrollo
-        : `http://localhost:${process.env.PORT || 3001}/api/internal/notify-handoff`; // Mismo servidor en producción
+        ? 'http://localhost:3001/api/internal/notify-handoff'
+        : `http://localhost:${process.env.PORT || 3001}/api/internal/notify-handoff`;
 
-      console.log("INTERNALURL: ", internalApiUrl)
+      console.log("[API Route] Internal notify-handoff URL:", internalApiUrl);
 
-      fetch(internalApiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-internal-secret': process.env.INTERNAL_API_SECRET || ''
-        },
-        body: JSON.stringify({
-          workspaceId: workspaceId,
-          sessionId: sessionId,
-          history: history,
-          initialMessage: firstUserMessage
-        })
-      }).catch(err => {
+      try {
+        const notifyResponse = await fetch(internalApiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-internal-secret': process.env.INTERNAL_API_SECRET || ''
+          },
+          body: JSON.stringify({
+            workspaceId: workspaceId,
+            sessionId: sessionId,
+            history: history,
+            initialMessage: firstUserMessage
+          })
+        });
+
+        if (!notifyResponse.ok) {
+          console.error(`[API Route] Handoff notification failed with status ${notifyResponse.status}: ${await notifyResponse.text()}`);
+        } else {
+          console.log(`[API Route] Handoff notification sent successfully for session ${sessionId}`);
+        }
+      } catch (err) {
         console.error('[API Route] Error llamando al notificador interno de handoff:', err);
-      });
-
-      // Nota: El correo se envía desde el servidor interno (server.js) 
-      // para evitar duplicados. No enviamos desde aquí.
+      }
 
       // Load the appropriate translation file on the server.
       const translations = await getServerTranslations(language);
-      console.log("Translation: ", translations)
       // Get the translated message.
       const handoffReply = translations.chatbotUI?.handoffMessage || "Understood. I'm finding an agent to help you. Please wait.";
-      console.log("REPLY: ", handoffReply)
       return createCorsResponse({
-        reply: handoffReply
+        reply: handoffReply,
+        handoff: true
       });
     } else if (typeof aiResponse === 'string') {
       // Construimos los mensajes de respuesta
